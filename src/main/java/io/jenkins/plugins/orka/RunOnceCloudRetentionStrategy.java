@@ -1,73 +1,29 @@
 package io.jenkins.plugins.orka;
 
+// import hudson.Extension;
 import hudson.model.Descriptor;
-import hudson.model.Executor;
-import hudson.model.ExecutorListener;
-import hudson.model.Queue;
-import hudson.slaves.AbstractCloudComputer;
-import hudson.slaves.AbstractCloudSlave;
 import hudson.slaves.CloudRetentionStrategy;
 import hudson.slaves.RetentionStrategy;
-
-import java.io.IOException;
-import java.util.logging.Level;
-import java.util.logging.Logger;
+import hudson.util.FormValidation;
 
 import org.kohsuke.accmod.Restricted;
 import org.kohsuke.accmod.restrictions.NoExternalUse;
 import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
 
-public class RunOnceCloudRetentionStrategy extends CloudRetentionStrategy implements ExecutorListener {
-    private static final Logger LOGGER = Logger.getLogger(RunOnceCloudRetentionStrategy.class.getName());
 
+public class IdleTimeCloudRetentionStrategy extends CloudRetentionStrategy {
     private final int idleMinutes;
+    private static final int recommendedMinIdle = 30;
 
     @DataBoundConstructor
-    public RunOnceCloudRetentionStrategy(int idleMinutes) {
+    public IdleTimeCloudRetentionStrategy(int idleMinutes) {
         super(idleMinutes);
         this.idleMinutes = idleMinutes;
     }
 
     public int getIdleMinutes() {
         return idleMinutes;
-    }
-
-    @Override
-    public void taskAccepted(final Executor executor, final Queue.Task task) {
-    }
-
-    @Override
-    public void taskCompleted(final Executor executor, final Queue.Task task, final long durationMS) {
-        taskCompleted(executor);
-    }
-
-    private void taskCompleted(final Executor executor) {
-        final AbstractCloudComputer<?> computer = (AbstractCloudComputer<?>) executor.getOwner();
-        final Queue.Executable currentExecutable = executor.getCurrentExecutable();
-        LOGGER.log(Level.FINE, "Terminating {0}.Build {1} is finished",
-                new Object[] { computer.getName(), currentExecutable });
-        taskCompleted(computer);
-    }
-
-    private void taskCompleted(final AbstractCloudComputer<?> computer) {
-        computer.setAcceptingTasks(false);
-
-        final AbstractCloudSlave computerNode = computer.getNode();
-        if (computerNode != null) {
-            try {
-                computerNode.terminate();
-            } catch (InterruptedException e) {
-                LOGGER.log(Level.WARNING, "Failed to terminate " + computer.getName(), e);
-            } catch (IOException e) {
-                LOGGER.log(Level.WARNING, "Failed to terminate " + computer.getName(), e);
-            }
-        }
-    }
-
-    @Override
-    public void taskCompletedWithProblems(final Executor executor, final Queue.Task task, final long durationMS,
-            final Throwable problems) {
-        taskCompleted(executor);
     }
 
     @Override
@@ -81,11 +37,32 @@ public class RunOnceCloudRetentionStrategy extends CloudRetentionStrategy implem
     public static final class DescriptorImpl extends Descriptor<RetentionStrategy<?>> {
         @Override
         public String getDisplayName() {
-            return "Terminate immediately after use";
+            return "Keep until idle time expires";
+        } 
+        
+        public FormValidation checkIdleMinutes(@QueryParameter String idleMinutesInput) {
+            try {
+                int idleMinutesInputValue = Integer.parseInt(idleMinutesInput);
+
+                if (0 < idleMinutesInputValue && idleMinutesInputValue < recommendedMinIdle) {
+                    return FormValidation.warning(
+                        String.format("Idle timeout less than %d seconds is not recommended.", 
+                                recommendedMinIdle)
+                    );
+                }
+                
+                if (idleMinutesInputValue <= 0) {
+                    return FormValidation.error("Idle timeout must be a positive number.");
+                }
+                
+                return FormValidation.ok();
+            } catch (NumberFormatException e) {
+                return FormValidation.error("Idle timeout must be a number.");
+            }
         }
     }
 
     private Object readResolve() {
-        return new RunOnceCloudRetentionStrategy(idleMinutes);
+        return new IdleTimeCloudRetentionStrategy(idleMinutes);
     }
 }
